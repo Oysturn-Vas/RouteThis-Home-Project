@@ -40,19 +40,16 @@ async def query_knowledge_base(query: str) -> dict:
             - error: str or None
             - retryable: bool
     """
-    logger.info(f"[RAG-PIPELINE] ===========================================")
-    logger.info(f"[RAG-PIPELINE] query_knowledge_base() CALLED")
-    logger.info(f"[RAG-PIPELINE] Query: '{query}'")
-    logger.info(f"[RAG-PIPELINE] ===========================================")
+    logger.debug(f"[RAG-PIPELINE] query_knowledge_base() CALLED with query: '{query}'")
 
     try:
-        logger.info(f"[RAG-PIPELINE] Step 1: Generating embedding for query...")
+        logger.debug(f"[RAG-PIPELINE] Step 1: Generating embedding for query...")
         query_vector = embeddings.embed_query(query)
-        logger.info(
+        logger.debug(
             f"[RAG-PIPELINE] Embedding generated, dimension: {len(query_vector)}"
         )
 
-        logger.info(
+        logger.debug(
             f"[RAG-PIPELINE] Step 2: Querying Pinecone index '{settings.PINECONE_INDEX_NAME}'..."
         )
         search_response = index.query(
@@ -61,7 +58,7 @@ async def query_knowledge_base(query: str) -> dict:
             include_metadata=True,
             filter={"model": {"$eq": "EA6350"}},
         )
-        logger.info(
+        logger.debug(
             f"[RAG-PIPELINE] Pinecone returned {len(search_response.matches) if search_response.matches else 0} matches"
         )
 

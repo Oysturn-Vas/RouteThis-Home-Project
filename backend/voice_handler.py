@@ -50,6 +50,14 @@ END_SESSION_MARKER = "[END_SESSION]"
 POST_SPEECH_WAIT = 5
 DISCONNECT_DELAY = 10
 
+STT_CORRECTIONS = {
+    "daughter": "router",
+    "smother": "router",
+    "mother": "router",
+    "brother": "router",
+    "report": "router",
+}
+
 
 def correct_stt_text(text: str) -> str:
     for wrong, correct in STT_CORRECTIONS.items():
@@ -102,6 +110,7 @@ class VoiceAgent:
         self.processing_audio: bool = False
         self.gibberish_attempts: int = 0
         self.waiting_for_tts_complete: bool = False
+        self._processing_lock = asyncio.Lock()
 
     async def send_error(self, message: str):
         await self.websocket.send_text(
@@ -230,7 +239,7 @@ class VoiceAgent:
                         await self.send_disconnect()
                         break
         except WebSocketDisconnect:
-            structured_logger.log_session_end(self.session_id, "websocket_disconnect")
+            logger.info(f"[{self.session_id}] WebSocket disconnected")
         except Exception as e:
             error_message = (
                 f"An unexpected error occurred in the main connection handler: {e}"
@@ -260,91 +269,92 @@ class VoiceAgent:
     async def process_audio_after_silence(self):
         if self.processing_audio:
             return
-        self.processing_audio = True
-            
-        try:
-            await asyncio.sleep(0.5)
+        
+        async with self._processing_lock:
+            self.processing_audio = True
+            try:
+                await asyncio.sleep(0.5)
 
-            if not self.audio_buffer:
-                return
+                if not self.audio_buffer:
+                    return
 
-            audio_data = bytes(self.audio_buffer)
-            self.audio_buffer.clear()
+                audio_data = bytes(self.audio_buffer)
+                self.audio_buffer.clear()
 
-            await self.websocket.send_text(
-                json.dumps({"type": "status", "status": "processing"})
-            )
+                await self.websocket.send_text(
+                    json.dumps({"type": "status", "status": "processing"})
+                )
 
-            user_text = await self.transcribe_audio(audio_data)
+                user_text = await self.transcribe_audio(audio_data)
 
-            if user_text:
-                user_text = correct_stt_text(user_text)
+                if user_text:
+                    user_text = correct_stt_text(user_text)
 
-            if user_text:
-                input_result = input_guardrails.process(user_text)
-                user_text = input_result.sanitized_text
+                if user_text:
+                    input_result = input_guardrails.process(user_text)
+                    user_text = input_result.sanitized_text
 
-                if is_gibberish(user_text):
-                    self.gibberish_attempts += 1
-                    if self.gibberish_attempts == 1:
-                        clarification = "I didn't quite catch that clearly. Could you please repeat what you said?"
-                        await self.websocket.send_text(
-                            json.dumps(
-                                {
-                                    "type": "transcript",
-                                    "role": "user",
-                                    "text": user_text,
-                                }
+                    if is_gibberish(user_text):
+                        self.gibberish_attempts += 1
+                        if self.gibberish_attempts == 1:
+                            clarification = "I didn't quite catch that clearly. Could you please repeat what you said?"
+                            await self.websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "transcript",
+                                        "role": "user",
+                                        "text": user_text,
+                                    }
+                                )
                             )
-                        )
-                        await self.websocket.send_text(
-                            json.dumps(
-                                {
-                                    "type": "transcript",
-                                    "role": "model",
-                                    "text": clarification,
-                                }
+                            await self.websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "transcript",
+                                        "role": "model",
+                                        "text": clarification,
+                                    }
+                                )
                             )
-                        )
-                        await self.speak_text(clarification)
-                        return
-                    else:
-                        self.gibberish_attempts = 0
-                        user_text = f"[User had trouble being heard clearly, please suggest they type instead if this continues]: {user_text}"
+                            await self.speak_text(clarification)
+                            return
+                        else:
+                            self.gibberish_attempts = 0
+                            user_text = f"[User had trouble being heard clearly, please suggest they type instead if this continues]: {user_text}"
 
-                await self.websocket.send_text(
-                    json.dumps(
-                        {"type": "transcript", "role": "user", "text": user_text}
+                    await self.websocket.send_text(
+                        json.dumps(
+                            {"type": "transcript", "role": "user", "text": user_text}
+                        )
                     )
-                )
-                response_text = await self.get_llm_response(user_text)
-                await self.websocket.send_text(
-                    json.dumps(
-                        {"type": "transcript", "role": "model", "text": response_text}
+                    response_text = await self.get_llm_response(user_text)
+                    await self.websocket.send_text(
+                        json.dumps(
+                            {"type": "transcript", "role": "model", "text": response_text}
+                        )
                     )
-                )
-                await self.speak_text(response_text)
-            else:
-                await self.websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "status",
-                            "status": "transcription_failed",
-                            "message": "Could not understand audio. Please try again.",
-                        }
+                    await self.speak_text(response_text)
+                else:
+                    await self.websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "status",
+                                "status": "transcription_failed",
+                                "message": "Could not understand audio. Please try again.",
+                            }
+                        )
                     )
+                await self.websocket.send_text(
+                    json.dumps({"type": "status", "status": "processing_complete"})
                 )
-            await self.websocket.send_text(
-                json.dumps({"type": "status", "status": "processing_complete"})
-            )
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            error_message = f"Failed to process audio after silence: {e}"
-            logger.exception(f"[{self.session_id}] {error_message}")
-            await self.send_error(error_message)
-        finally:
-            self.processing_audio = False
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                error_message = f"Failed to process audio after silence: {e}"
+                logger.exception(f"[{self.session_id}] {error_message}")
+                await self.send_error(error_message)
+            finally:
+                self.processing_audio = False
 
     async def transcribe_audio_local(self, audio_data: bytes) -> Optional[str]:
         if not asr_model:
@@ -389,12 +399,6 @@ class VoiceAgent:
             return response.text
         except Exception as e:
             error_message = f"Groq transcription failed: {e}"
-            structured_logger.log_error(
-                session_id=self.session_id,
-                error_type="transcription",
-                error_message=error_message
-            )
-            metrics_collector.record_error("transcription")
             logger.exception(f"[{self.session_id}] {error_message}")
             await self.send_error(error_message)
             return None
@@ -453,6 +457,8 @@ class VoiceAgent:
 Use the above information from the official Linksys EA6350 manual if it's relevant to the user's question. If it's not relevant or helpful, ignore it and answer from your general knowledge.
 """
                     logger.info(f"[{self.session_id}] RAG returned: {rag_result['answer'][:100]}...")
+                else:
+                    logger.warning(f"[{self.session_id}] RAG failed: {rag_result.get('error', 'unknown')}")
 
             response = await self.provider.generate_text_only(
                 self._format_messages(rag_context)

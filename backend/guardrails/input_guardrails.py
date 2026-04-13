@@ -60,7 +60,7 @@ class InputGuardrails:
                 is_safe=True,
                 sanitized_text=sanitized,
                 threat_type="prompt_injection",
-                details=f"Potential instruction override detected and sanitized"
+                details="Potential instruction override detected and sanitized"
             )
         return InputGuardrailResult(is_safe=True, sanitized_text=text)
 
@@ -88,27 +88,13 @@ class InputGuardrails:
 
     def process(self, text: str) -> InputGuardrailResult:
         result = self.check(text)
-        result = InputGuardrailResult(
-            is_safe=result.is_safe,
-            sanitized_text=result.sanitized_text,
-            threat_type=result.threat_type,
-            details=result.details
-        )
         
-        masked_text, had_sensitive = self.mask_sensitive(result.sanitized_text)
-        result = InputGuardrailResult(
-            is_safe=result.is_safe,
-            sanitized_text=masked_text,
-            threat_type=result.threat_type,
-            details=result.details
-        )
+        masked_text, _ = self.mask_sensitive(result.sanitized_text)
+        result.sanitized_text = masked_text
         
         length_result = self.check_length(result.sanitized_text)
-        result = InputGuardrailResult(
-            is_safe=result.is_safe,
-            sanitized_text=length_result.sanitized_text,
-            threat_type=length_result.threat_type or result.threat_type,
-            details=length_result.details or result.details
-        )
+        result.sanitized_text = length_result.sanitized_text
+        result.threat_type = length_result.threat_type or result.threat_type
+        result.details = length_result.details or result.details
         
         return result

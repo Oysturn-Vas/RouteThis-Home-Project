@@ -8,31 +8,41 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class DynamoDBSessionManager:
-    def __init__(self, table_name=settings.DYNAMODB_SESSIONS_TABLE, region_name=settings.AWS_REGION):
+    def __init__(
+        self,
+        table_name=settings.DYNAMODB_SESSIONS_TABLE,
+        region_name=settings.AWS_REGION,
+    ):
         self.table_name = table_name
         try:
             self.dynamodb = boto3.resource(
-                'dynamodb',
+                "dynamodb",
                 region_name=region_name,
                 aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             )
             self.table = self.dynamodb.Table(self.table_name)
         except Exception as e:
             logger.exception(f"Failed to initialize DynamoDB resource: {e}")
             raise
 
-    def save_session(self, session_id: str, chat_history: List[Dict[str, Any]], troubleshooting_step: str):
+    def save_session(
+        self,
+        session_id: str,
+        chat_history: List[Dict[str, Any]],
+        troubleshooting_step: str,
+    ):
         ttl = int(time.time()) + 86400  # 24 hours from now
         try:
             self.table.put_item(
                 Item={
-                    'session_id': session_id,
-                    'chat_history': json.dumps(chat_history),
-                    'troubleshooting_step': troubleshooting_step,
-                    'last_updated': int(time.time()),
-                    'expiration_time': ttl
+                    "session_id": session_id,
+                    "chat_history": json.dumps(chat_history),
+                    "troubleshooting_step": troubleshooting_step,
+                    "last_updated": int(time.time()),
+                    "expiration_time": ttl,
                 }
             )
             logger.info(f"Session state saved for session_id: {session_id}")
@@ -42,18 +52,22 @@ class DynamoDBSessionManager:
                 f"DynamoDB Error ({error_code}) saving session {session_id}: {e}"
             )
         except Exception as e:
-            logger.exception(f"An unexpected error occurred while saving session {session_id}: {e}")
+            logger.exception(
+                f"An unexpected error occurred while saving session {session_id}: {e}"
+            )
 
     def load_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         try:
-            response = self.table.get_item(Key={'session_id': session_id})
-            if 'Item' in response:
-                item = response['Item']
-                item['chat_history'] = json.loads(item['chat_history'])
+            response = self.table.get_item(Key={"session_id": session_id})
+            if "Item" in response:
+                item = response["Item"]
+                item["chat_history"] = json.loads(item["chat_history"])
                 logger.info(f"Session loaded successfully for session_id: {session_id}")
                 return item
             else:
-                logger.warning(f"Session not found for session_id: {session_id}. This is expected for new conversations.")
+                logger.warning(
+                    f"Session not found for session_id: {session_id}. This is expected for new conversations."
+                )
                 return None
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code")
@@ -62,7 +76,9 @@ class DynamoDBSessionManager:
             )
             return None
         except Exception as e:
-            logger.exception(f"An unexpected error occurred while loading session {session_id}: {e}")
+            logger.exception(
+                f"An unexpected error occurred while loading session {session_id}: {e}"
+            )
             return None
 
 
@@ -113,12 +129,12 @@ We generally follow these steps to resolve issues:
     *   If the issue is fixed, that's great! End the conversation with a friendly sign-off.
     *   If the issue is still there, apologize that the reboot didn't work and suggest they contact their Internet Service Provider or human support for more help.
     *   IMPORTANT: When ending a conversation, include the exact marker [END_SESSION] at the very end of your final response. This marker signals the system to disconnect.
-    *   When ending due to [END_SESSION], your response must include: "We're wrapping up! We'll disconnect in a few seconds. Thanks for calling!"
+    *   When ending due to [END_SESSION], your response must include: "We're wrapping up! We'll disconnect in a few seconds. Thanks for connecting!"
     *   Do NOT add additional closing phrases or repeat "Have a great day!" - this is already included in the disconnect message.
     *   Do not include any text after [END_SESSION] marker.
 
 CRITICAL SAFETY GUARDRAIL: If the user mentions 'smoke', 'fire', 'burning', or 'sparks', tell them to unplug the router immediately, contact emergency services if necessary, and terminate the call immediately."""
-        
+
         if image_context:
             base_prompt += f"\n\n[User Uploaded Image Context]: {image_context}\n(Use this image context to inform your answers, but do not change the 4-phase process.)\n"
 

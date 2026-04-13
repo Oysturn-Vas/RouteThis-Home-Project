@@ -28,14 +28,6 @@ class OutputGuardrails:
         r"open\s+(the\s+)?router\s+(and\s+)?(touch|modify|change)\s+(the\s+)?(internals?|circuit|board|components?)",
     ]
 
-    HALLUCINATION_INDICATORS = [
-        r"I\s+(made\s+up|invented|assumed|imagined|fabricated)",
-        r"not\s+(in the|from the|mentioned in|contained in)\s+(manual|document|text|source)",
-        r"I\s+don'?t\s+have\s+(the\s+)?(actual|real|correct)\s+information",
-        r"I\s+am\s+(not\s+)?(certain|sure)\s+about\s+this",
-        r"(this\s+is\s+)?(probably|maybe|possibly|likely)\s+correct",
-    ]
-
     WARNING_PREFIX = "[Warning: Content modified for safety] "
 
     def __init__(self):
@@ -43,17 +35,10 @@ class OutputGuardrails:
             "|".join(self.TOXIC_PATTERNS),
             re.IGNORECASE | re.DOTALL
         )
-        self._hallucination_regex = re.compile(
-            "|".join(self.HALLUCINATION_INDICATORS),
-            re.IGNORECASE | re.DOTALL
-        )
 
     def detect_toxic(self, text: str) -> Optional[str]:
         match = self._toxic_regex.search(text)
         return match.group() if match else None
-
-    def detect_hallucination(self, text: str) -> bool:
-        return bool(self._hallucination_regex.search(text))
 
     def _sanitize_toxic(self, text: str) -> str:
         sanitized = self._toxic_regex.sub("[SAFETY INSTRUCTION REDACTED]", text)

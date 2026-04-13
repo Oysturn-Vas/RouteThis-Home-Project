@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
-const WS_URL = 'ws://localhost:8000/ws/voice';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/voice';
 
 declare global {
   interface Window {

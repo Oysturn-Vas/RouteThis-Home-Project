@@ -32,10 +32,13 @@ class GeminiProvider(LLMProvider):
         self.client = genai.Client(api_key=settings.GOOGLE_API_KEY)
 
     async def generate_text_only(self, messages: list[dict]) -> str:
+        from google.genai import types
+        
         contents = []
         for m in messages:
             text = m["content"] if isinstance(m["content"], str) else str(m["content"])
-            contents.append(text)
+            role = "user" if m["role"] == "user" else "model"
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text)]))
         
         response = await self.client.aio.models.generate_content(
             model=self.model,
@@ -60,7 +63,15 @@ class GroqProvider(LLMProvider):
             model=self.model,
             messages=formatted
         )
-        return response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+        
+        if not response.choices:
+            raise ValueError("Groq returned no choices")
+        
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Groq returned empty content")
+        
+        return content.strip()
 
 
 _providers = {
