@@ -1,0 +1,85 @@
+# Environment variables (NEVER commit API keys or secrets)
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+
+# Python
+venv/
+venv3/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.tox/
+.hypothesis/
+
+# Node.js / React
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Project specific
+docs/*.pdf
+docs/*.doc
+*.wav
+*.mp3
+*.ogg
+*.flac
+audio/
+recordings/
+temp/
+tmp/
+
+# DynamoDB local (if using local DynamoDB)
+.localstack/
+
+# Credentials and sensitive data
+credentials.json
+*.credentials.json
+secrets/
+secrets.json
+
+# Frontend
+frontend/package-lock.json
+frontend/yarn.lock
+frontend/pnpm-lock.yaml
+
+# Pinecone / Vector DB local cache
+.pinecone/
+
+# Evaluation outputs
+outputs/
+eval_results/
