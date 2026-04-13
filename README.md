@@ -6,10 +6,10 @@ RouteMaster AI is a **voice-native, multimodal technical support agent** designe
 
 - **Seamless Voice Conversations:** Guides users through complex troubleshooting flows (like router reboots) using real-time, low-latency voice with automatic speech recognition and text-to-speech.
 - **Persistent Sessions:** User conversations are stored in AWS DynamoDB, allowing users to refresh the page or reconnect after a router reboot and continue exactly where they left off. Sessions expire after 24 hours via TTL.
-- **Swappable AI Providers:** Switch between cloud-based (Google Gemini) and local (Groq Llama 4 Scout) LLM models via a toggle in the UI. ASR is configurable via environment variables for cloud (Groq Whisper) or local (faster-whisper) processing.
-- **Robust Audio Processing:** Features silence detection, race condition prevention, STT corrections for common mishearings, and gibberish detection to handle imperfect audio input gracefully.
+- **Swappable AI Providers:** Switch between cloud-based (Google Gemini) and local (Groq Llama 3.3 70B) LLM models via a toggle in the UI. ASR is configurable via environment variables for cloud (Groq Whisper) or local (faster-whisper) processing.
+- **Robust Audio Processing:** Features silence detection, race condition prevention with asyncio locks, STT corrections for common mishearings, and gibberish detection to handle imperfect audio input gracefully.
 - **RAG & Vision Pipeline:** Processes PDF manuals including diagrams using multimodal AI to provide accurate, context-aware answers based on official documentation stored in Pinecone vector database.
-- **Safety Guardrails:** Built-in detection for safety hazards (smoke, fire) and automatic session termination. RAG responses are validated against source material to prevent hallucinations.
+- **Guardrails System:** Comprehensive input/output validation including prompt injection detection, sensitive content masking, toxicity filtering, and behavioral guidelines. RAG responses are validated against source material to prevent hallucinations.
 - **Auto-Disconnect:** LLM-controlled session termination with user-facing countdown timer when troubleshooting is complete.
 
 ## System Architecture
@@ -19,16 +19,16 @@ RouteMaster AI is a **voice-native, multimodal technical support agent** designe
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        PRESENTATION LAYER                        │
-│                         React Browser Client                      │
+│                   React + Vite + Tailwind CSS                    │
 │  - Microphone capture (Web Speech API)                           │
 │  - Audio playback (Web Audio API)                               │
-│  - Real-time transcript display                                  │
+│  - Real-time transcript display (ReactMarkdown)                 │
 │  - Provider toggle (Local/Cloud LLM)                            │
 │  - Session management (sessionStorage)                           │
 └─────────────────────────────────────────────────────────────────┘
                               ↕ WebSocket
 ┌─────────────────────────────────────────────────────────────────┐
-│                      BUSINESS LOGIC LAYER                        │
+│                      BUSINESS LOGIC LAYER                          │
 │                    FastAPI + Python Backend                      │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐   │
@@ -40,12 +40,19 @@ RouteMaster AI is a **voice-native, multimodal technical support agent** designe
 │  │  - get_llm_response()      - LLM (Groq/Gemini)         │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  ┌────────────────┐  ┌────────────────┐  ┌───────────────────┐  │
-│  │ StateManager   │  │  RouteMaster   │  │  DynamoDB        │  │
-│  │ - System prompt│  │  Tools        │  │  Session Mgr     │  │
-│  │ - Troubleshooting flow │  │ - RAG query │  │ - Save/Load   │  │
-│  │                 │  │ - Hallucination guard│  │ - TTL 24h     │  │
-│  └────────────────┘  └────────────────┘  └───────────────────┘  │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  │
+│  │ StateManager   │  │   providers    │  │   guardrails   │  │
+│  │ - System prompt│  │ - GeminiProv  │  │ - Input valid. │  │
+│  │ - Troubleshooting flow │  │ - GroqProv  │  │ - Output san. │  │
+│  │ - Anti-jailbreak│  │ - get_provider │  │ - Toxicity    │  │
+│  └────────────────┘  └────────────────┘  └────────────────┘  │
+│                                                                  │
+│  ┌────────────────┐  ┌───────────────────────────────────┐  │
+│  │ DynamoDB       │  │  tools (RAG)                     │  │
+│  │ Session Mgr    │  │ - Pinecone query                  │  │
+│  │ - Save/Load   │  │ - Hallucination validation        │  │
+│  │ - TTL 24h     │  │                                   │  │
+│  └────────────────┘  └───────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               ↕
 ┌─────────────────────────────────────────────────────────────────┐
@@ -219,13 +226,21 @@ Frontend ────► Backend: sessionId query
 
 ## Swappable Providers
 
-| Service | Cloud Provider | Local Provider | Config Location |
-| :--- | :--- | :--- | :--- |
-| **LLM & Reasoning** | Google Gemini | Groq (Llama 4 Scout) | **Frontend UI Toggle** |
-| **Speech-to-Text (ASR)** | Groq (WhisperV3) | `faster-whisper` | Environment variable |
-| **Text-to-Speech (TTS)** | ElevenLabs | - | - |
-| **Vector DB (RAG)** | Pinecone Serverless | - | - |
-| **Embeddings** | Google Gemini | - | - |
+The backend uses a provider abstraction layer (`backend/providers.py`) that allows swapping LLM providers seamlessly:
+
+| Service                  | Cloud Provider          | Local Provider       | Config Location        |
+| :----------------------- | :---------------------- | :------------------- | :--------------------- |
+| **LLM & Reasoning**      | Google Gemini 2.5 Flash | Groq (Llama 3.3 70B) | **Frontend UI Toggle** |
+| **Speech-to-Text (ASR)** | Groq (WhisperV3)        | `faster-whisper`     | Environment variable   |
+| **Text-to-Speech (TTS)** | ElevenLabs              | -                    | -                      |
+| **Vector DB (RAG)**      | Pinecone Serverless     | -                    | -                      |
+| **Embeddings**           | Google Gemini           | -                    | -                      |
+
+### Provider Implementation
+
+- **GeminiProvider** (`providers.py`): Uses Google's `genai` SDK with proper message role handling
+- **GroqProvider** (`providers.py`): Uses Groq's chat completions API
+- **get_provider()**: Factory function that maps frontend labels to backend providers
 
 ## Project Structure
 
@@ -235,12 +250,23 @@ routemaster-ai/
 │   ├── main.py              # FastAPI app entry point
 │   ├── voice_handler.py     # VoiceAgent class + WebSocket handler
 │   ├── state_manager.py     # System prompts + DynamoDB session manager
-│   └── tools.py             # RouteMasterTools (RAG query with hallucination guardrails)
+│   ├── providers.py         # LLM provider abstraction (Gemini/Groq)
+│   ├── tools.py             # RAG pipeline with hallucination guardrails
+│   └── guardrails/         # Input/output validation
+│       ├── input_guardrails.py   # Prompt injection, PII masking
+│       └── output_guardrails.py   # Toxicity detection, markdown stripping
 ├── config/
+│   ├── __init__.py
 │   └── settings.py          # Pydantic settings (environment variables)
 ├── frontend/
-│   └── src/
-│       └── App.tsx          # React UI with WebSocket client
+│   ├── src/
+│   │   ├── App.tsx         # Main React component
+│   │   ├── main.tsx        # React entry point
+│   │   └── index.css        # Tailwind CSS styles
+│   ├── package.json         # Node dependencies
+│   ├── vite.config.ts       # Vite bundler config
+│   ├── tailwind.config.js   # Tailwind CSS config
+│   └── tsconfig.json        # TypeScript config
 ├── scripts/
 │   ├── ingest_manual.py     # PDF → Pinecone vector DB ingestion
 │   └── run_evals.py         # LLM-as-judge evaluation script
@@ -249,57 +275,6 @@ routemaster-ai/
 ├── .env                      # Environment variables (API keys)
 ├── README.md                # This file
 └── AGENT.md                 # AI developer context (for AI assistants)
-```
-
-## WebSocket Protocol
-
-### Connection
-```
-ws://localhost:8000/ws/voice?provider=local&sessionId=abc-123
-```
-
-### Client → Server Messages
-
-```javascript
-// Text input (typed or voice final result)
-{ "type": "text", "data": "My router is running slow" }
-
-// Audio data (base64 from browser microphone)
-{ "type": "audio", "data": "data:audio/webm;base64,AGFzbv..." }
-
-// Provider change (LLM toggle)
-{ "type": "provider_change", "provider": "gemini" }
-```
-
-### Server → Client Messages
-
-```javascript
-// Session created (new connection)
-{ "type": "session_created", "sessionId": "abc-123-def" }
-
-// Full history (reconnection)
-{ "type": "full_history", "history": [
-    {"role": "user", "text": "..."},
-    {"role": "model", "text": "..."}
-] }
-
-// Transcript display
-{ "type": "transcript", "role": "user", "text": "Hello" }
-{ "type": "transcript", "role": "model", "text": "How can I help?" }
-
-// Audio response (base64 encoded)
-{ "type": "audio", "data": "base64_encoded_audio..." }
-
-// Status updates
-{ "type": "status", "status": "processing" }
-{ "type": "status", "status": "processing_complete" }
-{ "type": "status", "status": "transcription_failed", "message": "..." }
-
-// Provider changed confirmation
-{ "type": "provider_changed", "provider": "gemini" }
-
-// Auto-disconnect signal
-{ "type": "disconnect", "delay": 5, "message": "Ending session..." }
 ```
 
 ## Setup Instructions
@@ -384,6 +359,7 @@ python scripts/ingest_manual.py --pdf "docs/EA6350_UG_INTL_update.pdf"
 ```
 
 This script:
+
 - Extracts text and images from the PDF
 - Uses Gemini to generate technical captions for diagrams
 - Splits content into searchable chunks
@@ -415,39 +391,43 @@ Open `http://localhost:5173` in your browser. Click "Connect to Agent" to start.
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ASR_PROVIDER` | Speech-to-text provider ("cloud" or "local") | `cloud` |
-| `GROQ_API_KEY` | Groq API key (for STT and local LLM) | - |
-| `GROQ_MODEL_ID` | Groq model ID for local LLM | `meta-llama/llama-4-scout-17b-16e-instruct` |
-| `GOOGLE_API_KEY` | Google AI Studio API key | - |
-| `ELEVENLABS_API_KEY` | ElevenLabs API key | - |
-| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID | `56bWURjYFHyYyVf490Dp` |
-| `ELEVENLABS_VOICE_MODEL` | ElevenLabs TTS model | `eleven_flash_v2` |
-| `PINECONE_API_KEY` | Pinecone API key | - |
-| `PINECONE_INDEX_NAME` | Pinecone index name | `routemaster-manuals` |
-| `AWS_ACCESS_KEY_ID` | AWS access key | - |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key | - |
-| `AWS_REGION` | AWS region | `us-east-1` |
-| `DYNAMODB_SESSIONS_TABLE` | DynamoDB sessions table | `routemaster-sessions` |
-| `BACKEND_PORT` | Backend server port | `8000` |
+| Variable                  | Description                                  | Default                   |
+| ------------------------- | -------------------------------------------- | ------------------------- |
+| `DEFAULT_PROVIDER`        | Default LLM provider ("gemini" or "groq")    | `gemini`                  |
+| `GEMINI_MODEL_ID`         | Gemini model ID                              | `gemini-2.5-flash`        |
+| `GROQ_MODEL_ID`           | Groq model ID                                | `llama-3.3-70b-versatile` |
+| `ASR_PROVIDER`            | Speech-to-text provider ("cloud" or "local") | `cloud`                   |
+| `GROQ_API_KEY`            | Groq API key (for STT and local LLM)         | -                         |
+| `GOOGLE_API_KEY`          | Google AI Studio API key                     | -                         |
+| `ELEVENLABS_API_KEY`      | ElevenLabs API key                           | -                         |
+| `ELEVENLABS_VOICE_ID`     | ElevenLabs voice ID                          | `56bWURjYFHyYyVf490Dp`    |
+| `ELEVENLABS_VOICE_MODEL`  | ElevenLabs TTS model                         | `eleven_flash_v2`         |
+| `PINECONE_API_KEY`        | Pinecone API key                             | -                         |
+| `PINECONE_INDEX_NAME`     | Pinecone index name                          | `routemaster-manuals`     |
+| `PINECONE_ENVIRONMENT`    | Pinecone environment                         | `us-east-1`               |
+| `AWS_ACCESS_KEY_ID`       | AWS access key                               | -                         |
+| `AWS_SECRET_ACCESS_KEY`   | AWS secret key                               | -                         |
+| `AWS_REGION`              | AWS region                                   | `us-east-1`               |
+| `DYNAMODB_SESSIONS_TABLE` | DynamoDB sessions table                      | `routemaster-sessions`    |
+| `BACKEND_PORT`            | Backend server port                          | `8000`                    |
+| `FRONTEND_URL`            | Frontend URL for CORS                        | `http://localhost:5173`   |
 
 ## Troubleshooting
 
 ### Common Issues & Solutions
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "Connect to Agent" does nothing | Backend not running | Ensure `uvicorn backend.main:app --port 8000` is active |
-| Voice recording won't stop | Silence detection delay | Wait 0.5s after last speech; or refresh page |
-| Double responses / Two agents speaking | Race condition in audio buffer | Fixed with `processing_audio` flag and buffer clearing |
-| STT mishears "router" as "daughter" | Whisper misrecognition | Corrected via `STT_CORRECTIONS` dict automatically |
-| Asterisks read aloud in TTS | Markdown in LLM response | Stripped via `strip_markdown_for_tts()` before TTS |
-| Session lost on refresh | DynamoDB not configured | Verify AWS credentials and table `routemaster-sessions` exists |
-| RAG answers incorrect | Pinecone index empty | Run `python scripts/ingest_manual.py --pdf "docs/..."` |
-| ElevenLabs 401 error | Invalid API key or quota exceeded | Check `.env` ELEVENLABS_API_KEY or add credits to ElevenLabs |
-| Groq 400 error | Invalid role format | Backend converts `"model"` → `"assistant"` for Groq API compatibility |
-| Gibberish not detected | Short phrase with no router keywords | System asks for clarification on first instance |
+| Issue                                  | Cause                                | Solution                                                              |
+| -------------------------------------- | ------------------------------------ | --------------------------------------------------------------------- |
+| "Connect to Agent" does nothing        | Backend not running                  | Ensure `uvicorn backend.main:app --port 8000` is active               |
+| Voice recording won't stop             | Silence detection delay              | Wait 0.5s after last speech; or refresh page                          |
+| Double responses / Two agents speaking | Race condition in audio buffer       | Fixed with `processing_audio` flag and buffer clearing                |
+| STT mishears "router" as "daughter"    | Whisper misrecognition               | Corrected via `STT_CORRECTIONS` dict automatically                    |
+| Asterisks read aloud in TTS            | Markdown in LLM response             | Stripped via `strip_markdown_for_tts()` before TTS                    |
+| Session lost on refresh                | DynamoDB not configured              | Verify AWS credentials and table `routemaster-sessions` exists        |
+| RAG answers incorrect                  | Pinecone index empty                 | Run `python scripts/ingest_manual.py --pdf "docs/..."`                |
+| ElevenLabs 401 error                   | Invalid API key or quota exceeded    | Check `.env` ELEVENLABS_API_KEY or add credits to ElevenLabs          |
+| Groq 400 error                         | Invalid role format                  | Backend converts `"model"` → `"assistant"` for Groq API compatibility |
+| Gibberish not detected                 | Short phrase with no router keywords | System asks for clarification on first instance                       |
 
 ### Debug Mode
 
@@ -467,7 +447,7 @@ The RAG (Retrieval Augmented Generation) system provides accurate, grounded resp
 1. **Ingestion** (`scripts/ingest_manual.py`):
    - PDF is parsed with PyMuPDF
    - Images are extracted and captioned using Gemini Vision
-   - Text is split into 1000-char chunks with 150-char overlap
+   - Text is split into 2500-char chunks with 400-char overlap
    - Chunks are embedded with Google Gemini (3072 dimensions)
    - Stored in Pinecone with cosine similarity
 
@@ -489,28 +469,84 @@ The RAG (Retrieval Augmented Generation) system provides accurate, grounded resp
 
 Without hallucination guardrails, LLMs may confidently provide incorrect technical instructions that could damage hardware or mislead users. The two-step validation ensures all responses are grounded in official documentation.
 
-## Safety Features
+## Evaluation
+
+An LLM-as-judge evaluation script exists in `scripts/run_evals.py` for testing system responses against predefined personas and scenarios.
+
+## Guardrails System
+
+RouteMaster AI implements a comprehensive guardrails system to ensure safe and appropriate interactions:
+
+### Input Guardrails (`backend/guardrails/input_guardrails.py`)
+
+- **Prompt Injection Detection**: Monitors for attempts to override system instructions via patterns like "ignore previous instructions", injected system prompts, or template injection
+- **Sensitive Content Masking**: Automatically masks PII such as SSNs, credit card numbers, and email addresses
+- **Length Validation**: Enforces maximum text length (2000 characters) to prevent resource exhaustion
+
+### Output Guardrails (`backend/guardrails/output_guardrails.py`)
+
+- **Toxicity Filtering**: Detects and sanitizes potentially harmful instructions (e.g., instructions involving smoke, fire, electrical hazards)
+- **Markdown Stripping**: Removes formatting syntax before TTS to ensure clean audio output
+- **Warning Prefix**: When content is modified for safety, a warning prefix is added
+
+### Behavioral Guardrails (`backend/state_manager.py`)
+
+The system prompt includes guidelines for:
+
+- **Refusal on Uncertainty**: Clearly state when information is uncertain or from general knowledge
+- **Scope Limitation**: Only provide support for Linksys EA6350 router issues
+- **Anti-Jailbreak**: Ignore attempts to change behavior or override guidelines
+- **Privacy**: Never ask for or invent personal information
 
 ### Hazard Detection
 
-The system monitors for safety-related keywords:
-- smoke
-- fire
-- burning
-- sparks
+For safety-critical scenarios, the LLM is instructed to immediately:
 
-If detected, the LLM immediately:
-1. Instructs user to unplug the router
-2. Advises contacting emergency services if needed
-3. Terminates the call immediately
+1. Instruct user to unplug the router
+2. Advise contacting emergency services if needed
+3. Terminate the call immediately
 
 ### Session Auto-Termination
 
 When the LLM determines the conversation is complete, it includes `[END_SESSION]` marker in its response. The backend:
+
 1. Detects the marker
 2. Sends countdown message to frontend
-3. Closes WebSocket after 5 seconds
+3. Closes WebSocket after countdown
 4. Clears session from memory
+
+## Future Enhancements
+
+### Deployment
+
+- **Docker Containerization**: Package backend and frontend into Docker containers for easier deployment
+- **AWS ECS Fargate**: Deploy to AWS ECS Fargate with Application Load Balancer for production scalability
+- **Custom Domain**: Configure Route 53 and ACM certificate for custom domain with HTTPS
+
+### Features
+
+- **Multi-Router Support**: Extend beyond Linksys EA6350 to support additional router models
+- **Conversation Analytics**: Store and analyze conversation patterns for continuous improvement
+- **Multi-language Support**: Add support for non-English languages
+
+### AI/ML Improvements
+
+- **Fine-tuned RAG**: Fine-tune embedding model on router-specific technical documentation
+- **Advanced Hallucination Detection**: Implement semantic similarity checks beyond keyword matching
+- **Dynamic Troubleshooting Flows**: Use LLM to dynamically generate troubleshooting paths based on user input
+
+### Security
+
+- **WebSocket Rate Limiting**: Add connection and message rate limiting per session
+- **API Authentication**: Add JWT or API key authentication for API endpoints
+- **Input Sanitization**: Add additional sanitization layers for XSS and injection attacks
+
+### Performance
+
+- **Response Streaming**: Implement streaming TTS for faster perceived response times
+- **Caching Layer**: Add Redis caching for frequently accessed RAG results
+- **Connection Pooling**: Optimize database and API connection pooling
+- **Audio Compression**: Implement audio compression for reduced bandwidth usage
 
 ## License
 
