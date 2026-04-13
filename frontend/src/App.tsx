@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 const WS_URL = 'ws://localhost:8000/ws/voice';
 
@@ -14,9 +15,9 @@ export default function App() {
   const [transcript, setTranscript] = useState<Array<{role: string, text: string}>>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [inputText, setInputText] = useState('');
-  const [provider, setProvider] = useState<'local' | 'cloud'>('local');
+  const [provider, setProvider] = useState<'local' | 'cloud'>('cloud');
   const [showProviderModal, setShowProviderModal] = useState(false);
-  const [pendingProvider, setPendingProvider] = useState<'local' | 'cloud'>('local');
+  const [pendingProvider, setPendingProvider] = useState<'local' | 'cloud'>('cloud');
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectCountdown, setDisconnectCountdown] = useState(0);
   
@@ -49,7 +50,7 @@ export default function App() {
         sessionStorage.setItem('routemaster_session_id', data.sessionId);
       } else if (data.type === 'full_history') {
         const formattedHistory = data.history.map((msg: any) => ({
-          role: msg.role === 'model' ? 'assistant' : 'user',
+          role: (msg.role === 'model' || msg.role === 'assistant') ? 'assistant' : 'user',
           text: msg.text || ''
         }));
         setTranscript(formattedHistory);
@@ -76,11 +77,13 @@ export default function App() {
           alert(data.message || 'Could not understand audio. Please try again.');
         }
       } else if (data.type === 'disconnect') {
+        console.log('Received disconnect message, delay:', data.delay);
         setDisconnecting(true);
         setDisconnectCountdown(data.delay);
         const interval = setInterval(() => {
           setDisconnectCountdown(prev => {
             if (prev <= 1) {
+              console.log('Countdown complete, closing websocket');
               clearInterval(interval);
               wsRef.current?.close();
               sessionStorage.removeItem('routemaster_session_id');
@@ -112,7 +115,12 @@ export default function App() {
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    source.onended = () => {
+      console.log('Audio playback ended, sending audio_complete');
+      wsRef.current?.send(JSON.stringify({ type: 'audio_complete' }));
+    };
     source.start();
+    console.log('Audio playback started');
   };
 
   const sendTextMessage = (e?: React.FormEvent) => {
@@ -229,14 +237,14 @@ export default function App() {
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 bg-slate-100 rounded-full px-3 py-1.5">
-                  <span className={`text-xs font-medium ${provider === 'local' ? 'text-indigo-600' : 'text-slate-400'}`}>Local</span>
+                  <span className={`text-xs font-medium ${provider === 'local' ? 'text-indigo-600' : 'text-slate-400'}`}>Groq (Free)</span>
                   <button
                     onClick={handleProviderToggle}
                     className={`relative w-10 h-5 rounded-full transition-colors ${provider === 'local' ? 'bg-indigo-600' : 'bg-slate-400'}`}
                   >
                     <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${provider === 'local' ? 'left-0.5' : 'left-5'}`} />
                   </button>
-                  <span className={`text-xs font-medium ${provider === 'cloud' ? 'text-indigo-600' : 'text-slate-400'}`}>Cloud</span>
+                  <span className={`text-xs font-medium ${provider === 'cloud' ? 'text-indigo-600' : 'text-slate-400'}`}>Gemini (Cloud)</span>
                 </div>
                 <button 
                   onClick={newChat}
@@ -269,7 +277,9 @@ export default function App() {
                       : 'bg-white text-slate-800 rounded-bl-lg border border-slate-200'
                   }`}>
                     {msg.role !== 'user' && <p className="text-xs font-bold text-indigo-500 mb-1">RouteMaster AI</p>}
-                    <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                    <div className="prose prose-slate max-w-none">
+                      <ReactMarkdown>{msg.text}</ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               ))}

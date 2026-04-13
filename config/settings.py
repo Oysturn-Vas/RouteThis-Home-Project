@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # LLM Provider
-    GROQ_MODEL_ID: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    DEFAULT_PROVIDER: str = "gemini"
+    GROQ_MODEL_ID: str = "llama-3.3-70b-versatile"
+    GEMINI_MODEL_ID: str = "gemini-2.5-flash"
 
     # ASR Provider
     ASR_PROVIDER: str = "cloud"

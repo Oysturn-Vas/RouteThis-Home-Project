@@ -64,10 +64,10 @@ def process_pdf(file_path: str, model_name: str) -> List[dict]:
     
     # Initialize the text splitter
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, # Increased slightly to accommodate image descriptions
-        chunk_overlap=150,
+        chunk_size=2500,
+        chunk_overlap=400,
         length_function=len,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        separators=["\n\n\n", "\n\n", "\n", ". ", ", ", " ", ""]
     )
     
     chunks = []
