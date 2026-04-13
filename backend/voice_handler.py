@@ -19,25 +19,16 @@ from config import settings
 from state_manager import StateManager, DynamoDBSessionManager
 from tools import query_knowledge_base
 from providers import LLMProvider, get_provider
+from guardrails import InputGuardrails, OutputGuardrails
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("routemaster-voice")
 
-router = APIRouter()
+state_manager = StateManager()
+session_manager = DynamoDBSessionManager()
 
-
-STT_CORRECTIONS = {
-    "daughter": "router",
-    "smother": "router",
-    "mother": "router",
-    "brother": "router",
-    "report": "router",
-}
-
-END_SESSION_MARKER = "[END_SESSION]"
-POST_SPEECH_WAIT = 5
-DISCONNECT_DELAY = 10
-
+input_guardrails = InputGuardrails()
+output_guardrails = OutputGuardrails()
 
 elevenlabs_client = ElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
 groq_client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
@@ -53,8 +44,11 @@ if settings.ASR_PROVIDER == "local":
             f"Failed to load local ASR model. Please check your installation. Error: {e}"
         )
 
-state_manager = StateManager()
-session_manager = DynamoDBSessionManager()
+router = APIRouter()
+
+END_SESSION_MARKER = "[END_SESSION]"
+POST_SPEECH_WAIT = 5
+DISCONNECT_DELAY = 10
 
 
 def correct_stt_text(text: str) -> str:
@@ -87,16 +81,6 @@ def is_gibberish(text: str) -> bool:
         return True
 
     return False
-
-
-def strip_markdown_for_tts(text: str) -> str:
-    text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL)
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.+?)\*", r"\1", text)
-    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[\-\*]\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^\d+\.\s+", "", text, flags=re.MULTILINE)
-    return text
 
 
 class VoiceAgent:
@@ -246,7 +230,7 @@ class VoiceAgent:
                         await self.send_disconnect()
                         break
         except WebSocketDisconnect:
-            pass
+            structured_logger.log_session_end(self.session_id, "websocket_disconnect")
         except Exception as e:
             error_message = (
                 f"An unexpected error occurred in the main connection handler: {e}"
@@ -277,6 +261,7 @@ class VoiceAgent:
         if self.processing_audio:
             return
         self.processing_audio = True
+            
         try:
             await asyncio.sleep(0.5)
 
@@ -296,6 +281,9 @@ class VoiceAgent:
                 user_text = correct_stt_text(user_text)
 
             if user_text:
+                input_result = input_guardrails.process(user_text)
+                user_text = input_result.sanitized_text
+
                 if is_gibberish(user_text):
                     self.gibberish_attempts += 1
                     if self.gibberish_attempts == 1:
@@ -401,13 +389,19 @@ class VoiceAgent:
             return response.text
         except Exception as e:
             error_message = f"Groq transcription failed: {e}"
+            structured_logger.log_error(
+                session_id=self.session_id,
+                error_type="transcription",
+                error_message=error_message
+            )
+            metrics_collector.record_error("transcription")
             logger.exception(f"[{self.session_id}] {error_message}")
             await self.send_error(error_message)
             return None
 
     async def speak_text(self, text: str):
         try:
-            text_for_tts = strip_markdown_for_tts(text)
+            text_for_tts = output_guardrails.strip_markdown(text)
             logger.info(f"[{self.session_id}] Generating TTS audio for: {text}")
             audio_generator = await asyncio.to_thread(
                 elevenlabs_client.text_to_speech.convert,
@@ -437,11 +431,12 @@ class VoiceAgent:
     async def get_llm_response(self, user_text: str) -> tuple[str, bool]:
         """Returns (response_text, should_end_session)"""
         try:
+            input_result = input_guardrails.process(user_text)
+            user_text = input_result.sanitized_text
             self.chat_history.append({"role": "user", "text": user_text})
 
             rag_context = ""
             
-            # Only skip RAG for very short greeting messages (≤2 words)
             words = user_text.lower().split()
             if len(words) <= 2:
                 logger.info(f"[{self.session_id}] Skipping RAG for greeting: '{user_text}'")
@@ -463,9 +458,8 @@ Use the above information from the official Linksys EA6350 manual if it's releva
                 self._format_messages(rag_context)
             )
 
-            response = re.sub(
-                r"<system-reminder>.*?</system-reminder>", "", response, flags=re.DOTALL
-            )
+            output_result = output_guardrails.check_and_sanitize(response)
+            response = output_result.sanitized_text
             should_end_session = END_SESSION_MARKER in response
             response = response.replace(END_SESSION_MARKER, "").strip()
 
